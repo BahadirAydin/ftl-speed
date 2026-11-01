@@ -1,0 +1,9 @@
+LIBRARY user32.dll
+EXPORTS
+GetAsyncKeyState@4
+GetClientRect@8
+GetForegroundWindow@0
+GetWindowThreadProcessId@8
+WindowFromDC@4
+wsprintfA
+wvsprintfA@12
