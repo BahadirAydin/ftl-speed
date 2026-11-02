@@ -1,5 +1,6 @@
-# Copies the plugin into the FTL game folder. Run build.ps1 first.
-#   .\install.ps1                 find FTL through Steam
+# Copies the plugin into the FTL game folder. Works from the release zip
+# (dbghelp.dll next to this script) or from the source tree after build.ps1.
+#   .\install.ps1                 find FTL through Steam, or ask for the folder
 #   .\install.ps1 -GameDir <dir>  or point at the folder with FTLGame.exe
 #   -Uninstall                    remove the plugin again
 param(
@@ -29,9 +30,16 @@ function Test-IsPlugin([string]$path) {
 }
 
 if (-not $GameDir) { $GameDir = Find-FtlDir }
+if (-not $GameDir) {
+    Write-Host "Could not find FTL through Steam."
+    try { $GameDir = Read-Host "Paste the FTL game folder (the one with FTLGame.exe)" } catch { }
+    $GameDir = "$GameDir".Trim().Trim('"')
+    if ($GameDir -like "*FTLGame.exe") { $GameDir = Split-Path -Parent $GameDir }
+}
 if (-not $GameDir -or -not (Test-Path (Join-Path $GameDir "FTLGame.exe"))) {
     throw "Could not find FTLGame.exe. Pass the game folder with -GameDir."
 }
+$GameDir = (Resolve-Path -LiteralPath $GameDir).ProviderPath
 $dll = Join-Path $GameDir "dbghelp.dll"
 $ini = Join-Path $GameDir "ftl_speed.ini"
 $running = Get-Process FTLGame -ErrorAction SilentlyContinue
@@ -48,8 +56,14 @@ if ($Uninstall) {
     return
 }
 
-$built = Join-Path $PSScriptRoot "build\dbghelp.dll"
-if (-not (Test-Path $built)) { throw "build\dbghelp.dll not found; run build.ps1 first." }
+# release zip: next to this script; source tree: build\ after build.ps1
+$built = @((Join-Path $PSScriptRoot "dbghelp.dll"), (Join-Path $PSScriptRoot "build\dbghelp.dll")) |
+    Where-Object { Test-IsPlugin $_ } | Select-Object -First 1
+if (-not $built) { throw "dbghelp.dll not found next to install.ps1 (or in build\; run build.ps1 first)." }
+if ($built -eq $dll) {
+    Write-Host "FTL Speed is already in the game folder ($GameDir). Start FTL normally."
+    return
+}
 if ((Test-Path $dll) -and -not (Test-IsPlugin $dll)) {
     throw "$dll already exists and is not this plugin (another mod?). Not overwriting it."
 }
@@ -61,4 +75,5 @@ if (Test-Path $ini) {
     Copy-Item (Join-Path $PSScriptRoot "ftl_speed.ini") $ini
 }
 Write-Host "FTL Speed installed to $GameDir"
+Write-Host "Start FTL normally. Keys and speeds are set in $ini."
 if ($running) { Write-Host "FTL is running: restart it to load the plugin." }

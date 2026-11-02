@@ -16,7 +16,27 @@ at any speed.
 Tested with the Steam release of FTL 1.6 on Windows 10. It only touches the
 running game: no game files, saves or settings are changed.
 
-## Build
+## Download and install
+
+1. Download `ftl-speed-<version>.zip` from the
+   [latest release](https://github.com/BahadirAydin/ftl-speed/releases/latest)
+   and extract it.
+2. Double-click `Install.bat`. It finds FTL through Steam, or asks for the game
+   folder (the one with `FTLGame.exe`).
+3. Start FTL normally from Steam.
+
+To install by hand, copy `dbghelp.dll` and `ftl_speed.ini` into the FTL folder
+(in Steam: right-click FTL > Manage > Browse local files). To remove the
+plugin, double-click `Uninstall.bat`, or delete `dbghelp.dll`, `ftl_speed.ini`
+and `ftl_speed.log` from the game folder. `ftl_speed.log` records what the
+plugin did.
+
+Some antivirus programs distrust unsigned DLLs that hook a game, so they may
+flag the plugin. Release builds are made and tested by GitHub Actions from the
+tagged source, and the whole plugin is `src/ftl_speed.c`; build it yourself if
+you'd rather not trust a downloaded binary.
+
+## Build from source
 
 Needs [MSYS2](https://www.msys2.org/) with the UCRT64 GCC toolchain:
 
@@ -32,20 +52,15 @@ Then, in PowerShell from this folder:
 
 `build.ps1 -Toolchain <dir>` points it at a different `gcc.exe` folder.
 
-## Install / remove
+Install or remove your build with:
 
 ```powershell
 .\install.ps1              # finds FTL through Steam; or pass -GameDir "<folder with FTLGame.exe>"
 .\install.ps1 -Uninstall
 ```
 
-This copies `dbghelp.dll` and `ftl_speed.ini` into the FTL folder. Start FTL
-normally from Steam afterwards. `ftl_speed.log` in the game folder records what
-the plugin did. To remove it by hand, delete those three files.
-
-Some antivirus programs distrust unsigned DLLs that hook a game, so they may
-flag the plugin. The whole plugin is `src/ftl_speed.c`; build it yourself if
-you'd rather not trust a downloaded binary.
+This copies `build\dbghelp.dll` and `ftl_speed.ini` into the FTL folder. Start
+FTL normally from Steam afterwards.
 
 ## How it works
 
@@ -77,6 +92,21 @@ other builds the plugin still works, but the readout is an estimate.
 `build\harness.exe` loads the plugin into a test process and checks the clock
 speed, the sleep scaling and the dbghelp forwarding. `harness.exe --host-check`
 checks that nothing is hooked in programs other than FTLGame.exe.
+
+## Releasing
+
+GitHub Actions (`.github/workflows/build.yml`) builds and tests every push on
+Windows and keeps the release zip as a run artifact. To publish a release:
+
+1. Set the version in `PLUGIN_NAME` in `src/ftl_speed.c`, e.g.
+   `"FTL Speed plugin 1.1"`, and push it.
+2. Push the matching tag (`git tag v1.1`, `git push origin v1.1`), or run the
+   Build workflow from the Actions tab with "Publish a release" checked.
+
+The workflow then publishes `ftl-speed-<version>.zip` with install notes and a
+SHA-256 checksum. The zip holds `dbghelp.dll`, `ftl_speed.ini`, `install.ps1`,
+`Install.bat`, `Uninstall.bat`, `README.txt` (from `release/`) and the license.
+`.\package.ps1` makes the same zip in `build\` after `build.ps1`.
 
 ## License
 
