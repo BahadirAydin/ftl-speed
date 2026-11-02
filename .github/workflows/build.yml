@@ -1,0 +1,133 @@
+# Builds and tests the plugin on Windows and packs the release zip.
+# Publishes a GitHub release when a v<version> tag is pushed, or when the
+# workflow is run by hand with "Publish a release" checked. The version comes
+# from PLUGIN_NAME in src/ftl_speed.c; a pushed tag must match it.
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Publish a release (tag v<version from src/ftl_speed.c>) from this commit
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # pull requests from branches of this repository are already built on push
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Build
+        run: .\build.ps1 -Toolchain "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin"
+
+      - name: Test
+        run: |
+          .\build\harness.exe
+          if ($LASTEXITCODE -ne 0) { throw "harness.exe failed" }
+          .\build\harness.exe --host-check
+          if ($LASTEXITCODE -ne 0) { throw "harness.exe --host-check failed" }
+
+      - name: Package
+        id: package
+        run: .\package.ps1
+
+      # Install, update and remove the packed plugin with a stand-in game folder,
+      # under Windows PowerShell 5.1 like players have.
+      - name: Test install.ps1 from the zip
+        run: |
+          $pkg = Join-Path $env:RUNNER_TEMP "ftl-speed"
+          $game = Join-Path $env:RUNNER_TEMP "FTL Faster Than Light"
+          Expand-Archive (Get-Item build\ftl-speed-*.zip) $pkg
+          New-Item -ItemType Directory $game | Out-Null
+          New-Item -ItemType File (Join-Path $game "FTLGame.exe") | Out-Null
+          function Invoke-Install([string[]]$extra = @()) {
+              powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $pkg "install.ps1") -GameDir $game @extra
+              if ($LASTEXITCODE -ne 0) { throw "install.ps1 $extra failed" }
+          }
+          Invoke-Install
+          foreach ($f in "dbghelp.dll", "ftl_speed.ini") {
+              if (-not (Test-Path (Join-Path $game $f))) { throw "$f was not installed" }
+          }
+          Add-Content (Join-Path $game "ftl_speed.ini") "; edited by the player"
+          Invoke-Install
+          if (-not (Select-String -Quiet -SimpleMatch "; edited by the player" (Join-Path $game "ftl_speed.ini"))) {
+              throw "reinstall replaced the player's ftl_speed.ini"
+          }
+          Invoke-Install @("-Uninstall")
+          $left = @(Get-ChildItem $game -Exclude "FTLGame.exe")
+          if ($left) { throw "uninstall left $($left.Name -join ', ')" }
+
+      - name: Test Install.bat and Uninstall.bat from the zip
+        shell: cmd
+        timeout-minutes: 2
+        run: |
+          set "GAME=%RUNNER_TEMP%\FTL Faster Than Light"
+          echo.| "%RUNNER_TEMP%\ftl-speed\Install.bat" -GameDir "%GAME%"
+          if not exist "%GAME%\dbghelp.dll" (echo Install.bat did not install the plugin & exit /b 1)
+          echo.| "%RUNNER_TEMP%\ftl-speed\Uninstall.bat" -GameDir "%GAME%"
+          if exist "%GAME%\dbghelp.dll" (echo Uninstall.bat did not remove the plugin & exit /b 1)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ftl-speed-${{ steps.package.outputs.version }}
+          path: |
+            build/ftl-speed-*.zip
+            build/ftl-speed-*.zip.sha256
+            build/release-notes.md
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ftl-speed-${{ needs.build.outputs.version }}
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="$GITHUB_REF_NAME"
+            if [ "$tag" != "v$VERSION" ]; then
+              echo "::error::Tag $tag does not match the version in src/ftl_speed.c ($VERSION). Tag v$VERSION instead, or change PLUGIN_NAME."
+              exit 1
+            fi
+          else
+            tag="v$VERSION"
+            if existing=$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha 2>/dev/null) && [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $tag already exists on commit $existing. Bump the version in PLUGIN_NAME in src/ftl_speed.c first."
+              exit 1
+            fi
+          fi
+          flags=()
+          case "$VERSION" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$tag" "ftl-speed-$VERSION.zip" "ftl-speed-$VERSION.zip.sha256" \
+            --title "FTL Speed $VERSION" --notes-file release-notes.md --target "$GITHUB_SHA" "${flags[@]}"
